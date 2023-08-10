@@ -33,7 +33,7 @@ class CustomerPortal_SaveRecord extends CustomerPortal_FetchRecord {
 
 
 
-			if (in_array($module, array('HelpDesk', 'Documents', 'Assets', 'Quotes', 'Contacts', 'Accounts'))) {
+			if (in_array($module, array('HelpDesk', 'Documents', 'Assets', 'Quotes', 'Contacts', 'Accounts', 'Potentials'))) {
 				$recordId = $request->get('recordId');
 				if (!empty($recordId)) {
 					//Stop edit record if edit is disabled
