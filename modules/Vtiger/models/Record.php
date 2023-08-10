@@ -362,6 +362,9 @@ class Vtiger_Record_Model extends Vtiger_Base_Model {
 	 * @return <Boolean> - true/false
 	 */
 	public function isEditable() {
+		if($this->get('cf_895') === "on" || $this->get('cf_895') === true) {
+			return false;
+		}
 		return Users_Privileges_Model::isPermitted($this->getModuleName(), 'EditView', $this->getId());
 	}
 
