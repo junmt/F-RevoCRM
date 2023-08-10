@@ -2049,10 +2049,10 @@ class Vtiger_Module_Model extends Vtiger_Module {
 		$title = vtranslate($moduleName, $moduleName);
 
 		$moduleIcon = "<i class='vicon-$lowerModuleName' title='$title'></i>";
-		if ($this->source == 'custom') {
-			$moduleShortName = mb_substr(trim($title), 0, 1);
-			$moduleIcon = "<span class='custom-module' title='$title'><span>$moduleShortName</span></span>";
-		}
+		// if ($this->source == 'custom' && $this->getName() != `Test`) {
+		// 	$moduleShortName = mb_substr(trim($title), 0, 1);
+		// 	$moduleIcon = "<span class='custom-module' title='$title'><span>$moduleShortName</span></span>";
+		// }
 
 		$imageFilePath = 'layouts/'.Vtiger_Viewer::getLayoutName()."/modules/$moduleName/$moduleName.png";
 		if (file_exists($imageFilePath)) {
