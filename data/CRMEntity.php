@@ -96,7 +96,7 @@ class CRMEntity {
 	}
 
 	function saveentity($module, $fileid = '') {
-		global $current_user, $adb; //$adb added by raju for mass mailing
+		global $current_user, $adb, $VTIGER_BULK_SAVE_MODE; //$adb added by raju for mass mailing
 		$insertion_mode = $this->mode;
 
 		$columnFields = $this->column_fields;
@@ -116,7 +116,9 @@ class CRMEntity {
 			$_FILES = Vtiger_Util_Helper::transformUploadedFiles($_FILES, true);
 		}
 
-		$this->db->startTransaction();
+		if(!$VTIGER_BULK_SAVE_MODE) {
+			$this->db->startTransaction();
+		}
 		foreach ($this->tab_name as $table_name) {
 			if ($table_name == "vtiger_crmentity") {
 				$this->insertIntoCrmEntity($module, $fileid);
@@ -133,7 +135,9 @@ class CRMEntity {
 		//Calling the Module specific save code
 		$this->save_module($module);
 
-		$this->db->completeTransaction();
+		if(!$VTIGER_BULK_SAVE_MODE) {
+			$this->db->completeTransaction();
+		}
 
 		// vtlib customization: Hook provide to enable generic module relation.
 		if ($_REQUEST['createmode'] == 'link' && !$_REQUEST['__linkcreated']) {
