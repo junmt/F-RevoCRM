@@ -166,6 +166,8 @@ class Vtiger_Field_Model extends Vtiger_Field {
 				$fieldDataType = 'salutation';
             } else if($uiType == '55' && stripos($this->getName(), 'roundrobin_userid') !== false) {
                 $fieldDataType = 'multiowner';
+			} else if($uiType == '666'){
+				$fieldDataType = 'empty';
 			} else {
 				$webserviceField = $this->getWebserviceFieldObject();
 				$fieldDataType = $webserviceField->getFieldDataType();
