@@ -33,6 +33,7 @@ abstract class EntityMeta{
 	protected $emailFields;
 	protected $ownerFields;
 	protected $moduleFields = null;
+	protected $imageFields;
 	
 	protected function __construct($webserviceObject,$user)
     {
@@ -260,6 +261,18 @@ abstract class EntityMeta{
 		}
 		// not sure whether inactive users should be considered deleted or not.
 		return "vtiger_users.status='Active'";
+	}
+
+	public function getImageFields() {
+		if ($this->imageFields === null) {
+			$this->imageFields = array();
+			foreach ($this->moduleFields as $fieldName => $webserviceField) {
+				if ($webserviceField->getUIType() == 69) {
+					$this->imageFields[] = $fieldName;
+				}
+			}
+		}
+		return $this->imageFields;
 	}
 
 	abstract function hasPermission($operation,$webserviceId);

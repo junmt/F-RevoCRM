@@ -8,36 +8,30 @@
  * All Rights Reserved.
  *************************************************************************************/
 
-class VtigerModuleOperation extends WebserviceEntityOperation {
+ class VtigerModuleOperation extends WebserviceEntityOperation {
 	protected $tabId;
 	protected $isEntity = true;
 	protected $partialDescribeFields = null;
-	
+	private $queryTotalRows = 0;
+
 	public function __construct($webserviceObject,$user,$adb,$log)
 	{
 		parent::__construct($webserviceObject,$user,$adb,$log);
 		$this->meta = $this->getMetaInstance();
 		$this->tabId = $this->meta->getTabId();
 	}
-	public function VtigerModuleOperation($webserviceObject,$user,$adb,$log){
-		// PHP4-style constructor.
-		// This will NOT be invoked, unless a sub-class that extends `foo` calls it.
-		// In that case, call the new-style constructor to keep compatibility.
-		self::__construct($webserviceObject,$user,$adb,$log);
-	}
-	
 	protected function getMetaInstance(){
 		if(empty(WebserviceEntityOperation::$metaCache[$this->webserviceObject->getEntityName()][$this->user->id])){
 			WebserviceEntityOperation::$metaCache[$this->webserviceObject->getEntityName()][$this->user->id]  = new VtigerCRMObjectMeta($this->webserviceObject,$this->user);
 		}
 		return WebserviceEntityOperation::$metaCache[$this->webserviceObject->getEntityName()][$this->user->id];
 	}
-	
+
 	public function create($elementType,$element){
 		$crmObject = new VtigerCRMObject($elementType, false);
-		
+
 		$element = DataTransform::sanitizeForInsert($element,$this->meta);
-		
+
 		$error = $crmObject->create($element);
 		if(!$error){
 			throw new WebServiceException(WebServiceErrorCode::$DATABASEQUERYERROR,
@@ -48,21 +42,21 @@ class VtigerModuleOperation extends WebserviceEntityOperation {
 		$id = $crmObject->getObjectId();
 
 		// Bulk Save Mode
-		if(CRMEntity::isBulkSaveMode()) {		
+		if(CRMEntity::isBulkSaveMode()) {
 			// Avoiding complete read, as during bulk save mode, $result['id'] is enough
 			return array('id' => vtws_getId($this->meta->getEntityId(), $id) );
 		}
-		
+
 		$error = $crmObject->read($id);
 		if(!$error){
 			throw new WebServiceException(WebServiceErrorCode::$DATABASEQUERYERROR,
 				vtws_getWebserviceTranslatedString('LBL_'.
 						WebServiceErrorCode::$DATABASEQUERYERROR));
 		}
-		
+
 		return DataTransform::filterAndSanitize($crmObject->getFields(),$this->meta);
 	}
-	
+
 	public function retrieve($id){
 		
 		$ids = vtws_getIdComponents($id);
@@ -102,7 +96,7 @@ class VtigerModuleOperation extends WebserviceEntityOperation {
 		}
 		return $relatedIds;
     }
-	
+
 	public function update($element){
 		$ids = vtws_getIdComponents($element["id"]);
 		$element = DataTransform::sanitizeForInsert($element,$this->meta);
@@ -127,7 +121,7 @@ class VtigerModuleOperation extends WebserviceEntityOperation {
 		
 		return DataTransform::filterAndSanitize($crmObject->getFields(),$this->meta);
 	}
-	
+
 	public function revise($element){
 		$ids = vtws_getIdComponents($element["id"]);
 		$element = DataTransform::sanitizeForInsert($element,$this->meta);
@@ -167,58 +161,184 @@ class VtigerModuleOperation extends WebserviceEntityOperation {
 		}
 		return array("status"=>"successful");
 	}
-	
-	public function query($q){
-		
-		$parser = new Parser($this->user, $q);
-		$error = $parser->parse();
-		
-		if($error){
-			return $parser->getError();
+
+	public function wsVTQL2SQL($q, &$meta, &$queryRelatedModules, $mode = 'new') {
+		require_once 'include/Webservices/VTQL_EnhancedParser.php';
+
+		$q = str_replace(array("\n", "\t", "\r"), ' ', $q);
+		$parser = new VTQL_EnhancedParser($this->user, $q);
+
+		if($mode == 'old') {
+			$oldParser = new Parser($this->user, $q);
+			$error = $oldParser->parse();
+			if ($error) {
+				return $oldParser->getError();
+			}
+			$mysql_query = $oldParser->getSql();
+			$meta = $oldParser->getObjectMetaData();
+		} elseif ($parser->conditionQuery($q)) {  // extended workflow condition syntax
+			$moduleRegex = '/[fF][rR][Oo][Mm]\s+([^\s;]+)/';
+			preg_match($moduleRegex, $q, $m);
+			$fromModule = trim($m[1]);
+			$handler = vtws_getModuleHandlerFromName($fromModule, $this->user);
+			$meta = $handler->getMeta();
+			list($mysql_query, $queryRelatedModules) = $parser->conditionGetQuery($q, $fromModule, $this->user);
+		} else {  // FQN extended syntax
+			list($mysql_query,$queryRelatedModules) = $parser->getQuery($q, $this->user);
+			$moduleRegex = "/[fF][rR][Oo][Mm]\s+([^\s;]+)/";
+			preg_match($moduleRegex, $q, $m);
+			$fromModule = trim($m[1]);
+			$handler = vtws_getModuleHandlerFromName($fromModule, $this->user);
+			$meta = $handler->getMeta();
 		}
-		
-		$mysql_query = $parser->getSql();
-		$meta = $parser->getObjectMetaData();
+
+		return $mysql_query;
+	}
+
+	public function query($q) {
+		$mysql_query = $this->wsVTQL2SQL($q, $meta, $queryRelatedModules);
+		return $this->querySQLResults($mysql_query, $q, $meta, $queryRelatedModules);
+	}
+
+	public function querySQLResults($mysql_query, $q, $meta, $queryRelatedModules, $addimagefields = true, $keycase = ADODB_ASSOC_CASE_LOWER) {
+		global $site_URL, $adb, $default_charset, $currentModule;
+		$holdCM = $currentModule;
+		$currentModule = $meta->getEntityName();
+		if (strpos($mysql_query, 'vtiger_inventoryproductrel')) {
+			$invlines = true;
+			$pdoWebserviceObject = VtigerWebserviceObject::fromName($adb, 'Products');
+			$pdowsid = $pdoWebserviceObject->getEntityId();
+			$srvWebserviceObject = VtigerWebserviceObject::fromName($adb, 'Services');
+			$srvwsid = $srvWebserviceObject->getEntityId();
+		} else {
+			$invlines = false;
+		}
 		$this->pearDB->startTransaction();
 		$result = $this->pearDB->pquery($mysql_query, array());
-        $tableIdColumn = $meta->getIdColumn();
 		$error = $this->pearDB->hasFailedTransaction();
 		$this->pearDB->completeTransaction();
-		
-		if($error){
-			throw new WebServiceException(WebServiceErrorCode::$DATABASEQUERYERROR,
-					vtws_getWebserviceTranslatedString('LBL_'.
-							WebServiceErrorCode::$DATABASEQUERYERROR));
+
+		if ($error) {
+			$currentModule = $holdCM;
+			throw new WebServiceException(WebServiceErrorCode::$DATABASEQUERYERROR, vtws_getWebserviceTranslatedString('LBL_'.WebServiceErrorCode::$DATABASEQUERYERROR));
 		}
-		
+		if ($addimagefields) {
+			$imageFields = $meta->getImageFields();
+		}
+		$isDocModule = ($meta->getEntityName()=='Documents');
+		$parser = new VTQL_EnhancedParser($this->user, $q);
+		$isRelatedQuery = $parser->isFQNQuery($q);
 		$noofrows = $this->pearDB->num_rows($result);
 		$output = array();
-		for($i=0; $i<$noofrows; $i++){
-			$row = $this->pearDB->fetchByAssoc($result,$i);
-			if(!$meta->hasPermission(EntityMeta::$RETRIEVE,$row[$tableIdColumn])){
+		$streamraw = (isset($_REQUEST['format']) && strtolower($_REQUEST['format'])=='streamraw');
+		$streaming = (isset($_REQUEST['format']) && (strtolower($_REQUEST['format'])=='stream' || $streamraw));
+		$stream = '';
+		$fieldColumnMapping = $meta->getFieldColumnMapping();
+		for ($i=0; $i<$noofrows; $i++) {
+			$row = $this->pearDB->fetchByAssoc($result, $i, true, $keycase);
+			$rowcrmid = (isset($row[$fieldColumnMapping['id']]) ? $row[$fieldColumnMapping['id']] : (isset($row['crmid']) ? $row['crmid'] : (isset($row['id']) ? $row['id'] : '')));
+			if (!$meta->hasPermission(EntityMeta::$RETRIEVE, $rowcrmid)) {
 				continue;
 			}
-			if(strpos(explode("FROM",$mysql_query)[0], 'vtiger_inventoryproductrel') === false){
-				// 明細行が含まれていない場合
-				$output[$row[$tableIdColumn]] = DataTransform::sanitizeDataWithColumn($row,$meta);
-			}else{
-				// 明細行が含まれている場合
-				$output[] = DataTransform::sanitizeDataWithColumn($row,$meta);
+			if ($streamraw) {
+				$newrow = $row;
+			} else {
+				$newrow = DataTransform::sanitizeDataWithColumn($row, $meta);
+				if ($isRelatedQuery) {
+					if ($invlines) {
+						$newrow = $row;
+						if (!empty($newrow['id'])) {
+							$newrow['id'] = vtws_getWebserviceEntityId(getSalesEntityType($newrow['id']), $newrow['id']);
+						}
+						$newrow['linetype'] = '';
+						if (!empty($newrow['productid'])) {
+							$newrow['linetype'] = getSalesEntityType($newrow['productid']);
+							$newrow['productid'] = ($newrow['linetype'] == 'Products' ? $pdowsid : $srvwsid) . 'x' . $newrow['productid'];
+						}
+						if (!empty($newrow['serviceid'])) {
+							$newrow['linetype'] = 'Services';
+							$newrow['serviceid'] = $srvwsid . 'x' . $newrow['serviceid'];
+						}
+					} else {
+						$relflds = array_diff_key($row, $newrow);
+						foreach ($queryRelatedModules as $relmod => $relmeta) {
+							$lrm = strtolower($relmod);
+							$newrflds = array();
+							foreach ($relflds as $fldname => $fldvalue) {
+								$fldmod = substr($fldname, 0, strlen($relmod));
+								if (isset($row[$fldname]) && $fldmod==$lrm) {
+									$newkey = substr($fldname, strlen($lrm));
+									$newrflds[$newkey] = $fldvalue;
+								}
+							}
+							$relrow = DataTransform::sanitizeDataWithColumn($newrflds, $relmeta);
+							$newrelrow = array();
+							foreach ($relrow as $key => $value) {
+								$newrelrow[$lrm.$key] = $value;
+							}
+							$newrow = array_merge($newrow, $newrelrow);
+						}
+					}
+				}
+				if ($isDocModule) {
+					$relatt=$adb->pquery('SELECT attachmentsid FROM vtiger_seattachmentsrel WHERE crmid=?', array($rowcrmid));
+					if ($relatt && $adb->num_rows($relatt)==1) {
+						$fileid = $adb->query_result($relatt, 0, 0);
+						$attrs=$adb->pquery('SELECT * FROM vtiger_attachments WHERE attachmentsid=?', array($fileid));
+						if ($attrs && $adb->num_rows($attrs) == 1) {
+							$name = @$adb->query_result($attrs, 0, 'name');
+							$filepath = @$adb->query_result($attrs, 0, 'path');
+							$name = html_entity_decode($name, ENT_QUOTES, $default_charset);
+							// $newrow['_downloadurl'] = $site_URL.'/'.$filepath.$fileid.'_'.$name;
+							$newrow['filename'] = $name;
+						}
+					}
+				}
+			}
+			if ($streaming) {
+				$stream .= json_encode($newrow)."\n";
+				if (($i % 500)==0) {
+					echo $stream;
+					flush();
+					$stream = '';
+				}
+			} else {
+				$output[] = $newrow;
 			}
 		}
-		
-		$newOutput = array();
-        if(php7_count($output)) {
-            //Added check if tags was requested or not
-            if(stripos($mysql_query, $meta->getEntityBaseTable().'.tags') !== false) $tags = Vtiger_Tag_Model::getAllAccessibleTags(array_keys($output));
-            foreach($output as $id => $row1) {
-                if(!empty($tags[$id])) $output[$id]['tags'] = $tags[$id];
-                $newOutput[] = $output[$id];
+		if ($stream!='') {
+			echo $stream;
+			flush();
+			$stream = '';
+		}
+
+		$query = preg_replace("/[\n\r\s]+/", ' ', $mysql_query);
+		if (strripos($query, ' ORDER BY ') > 0) {
+			$query = substr($query, 0, strripos($query, ' ORDER BY '));
+		}
+		if (strripos($query, ' LIMIT ') > 0) {
+			$query = substr($query, 0, strripos($query, ' LIMIT '));
+		}
+		$mysql_query = "SELECT count(*) AS cnt".substr($query, stripos($query, ' FROM '), strlen($query));
+
+		$result = $this->pearDB->pquery($mysql_query, array());
+		if ($result) {
+			if ($result->fields) {
+				$this->queryTotalRows = $result->fields['cnt'];
+			} else {
+				$this->queryTotalRows = 0;
+			}
+		} else {
+			$this->queryTotalRows = 0;
+		}
+		$currentModule = $holdCM;
+		return $output;
 	}
-        }
-		return $newOutput;
+
+	public function getQueryTotalRows() {
+		return $this->queryTotalRows;
 	}
-	
+
 	public function describe($elementType){
 		$app_strings = VTWS_PreserveGlobal::getGlobal('app_strings');
 		$current_user = vtws_preserveGlobal('current_user',$this->user);;
