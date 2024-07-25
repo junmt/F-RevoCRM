@@ -275,7 +275,8 @@ Vtiger.Class("Calendar_Calendar_Js", {
 			'fieldname': feedCheckbox.data('calendarFieldname'),
 			'color': feedCheckbox.data('calendarFeedColor'),
 			'textColor': feedCheckbox.data('calendarFeedTextcolor'),
-			'conditions': feedCheckbox.data('calendarFeedConditions')
+			'conditions': feedCheckbox.data('calendarFeedConditions'),
+			'is_own': feedCheckbox.data('calendarIs_own')
 		};
 	},
 	renderEvents: function () {
@@ -333,14 +334,22 @@ Vtiger.Class("Calendar_Calendar_Js", {
 		var disabledFeeds = this.getDisabledFeeds();
 		var feedsList = widgetContainer.find('#calendarview-feeds > ul.feedslist');
 		var calendarfeeds = feedsList.find('[data-calendar-feed]');
+		var checkedCount = 0;
 		calendarfeeds.each(function () {
 			var feedCheckbox = jQuery(this);
 			var sourceKey = feedCheckbox.data('calendarSourcekey');
 			if (disabledFeeds.indexOf(sourceKey) === -1) {
 				feedCheckbox.attr('checked', true);
+				checkedCount++;
 			}
 			thisInstance.colorizeFeed(feedCheckbox);
 		});
+		
+		// 全選択チェックボックスを選択する（現時点では共有カレンダーにのみ実装）
+		var feedCheckbox = jQuery('#calendarview-feeds-all .toggleCalendarFeed');
+		if (feedCheckbox.length > 0 && calendarfeeds.length == checkedCount) {
+			feedCheckbox.attr('checked', true);
+		}
 	},
 	fetchEvents: function (feedCheckbox) {
 		var thisInstance = this;
@@ -385,6 +394,21 @@ Vtiger.Class("Calendar_Calendar_Js", {
 					return module === eventObj.module && eventObj.conditions === conditions && fieldName === eventObj.fieldName;
 				});
 	},
+	getCheckedCheckboxCounts: function () {
+		var checkedCount = 0;
+		var $area = jQuery("#calendarview-feeds .feedslist");
+		$area.children().each(function(){
+			var currentTarget = jQuery(this).find("input");
+			var sourceKey = currentTarget.data('calendarSourcekey');
+			if (sourceKey !== undefined && currentTarget.is(':checked')) {
+				checkedCount++;
+			}
+		})
+		return {
+			checkboxCount: $area.children().length,
+			checkedCount: checkedCount
+		}
+	},
 	registerFeedChangeEvent: function () {
 		var thisInstance = this;
 		jQuery('#calendarview-feeds').on('change',
@@ -399,6 +423,40 @@ Vtiger.Class("Calendar_Calendar_Js", {
 						thisInstance.disableFeed(sourceKey);
 						thisInstance.removeEvents(curentTarget);
 					}
+					// 全選択チェックボックスを選択・解除する
+					var feedCheckbox = jQuery('#calendarview-feeds-all .toggleCalendarFeed');
+					var params = thisInstance.getCheckedCheckboxCounts();
+					if (feedCheckbox.length > 0) {
+						if (params.checkboxCount > params.checkedCount) {
+							feedCheckbox.removeAttr('checked');
+						}else if (params.checkboxCount == params.checkedCount) {
+							feedCheckbox.attr('checked','checked');
+						}
+					}
+				});
+		// 全選択チェックボックス（現時点では共有カレンダーにのみ実装）
+		jQuery('#calendarview-feeds-all').on('change',
+		'input[type="checkbox"].toggleCalendarFeed',
+				function () {
+					var feedCheckbox = jQuery(this);
+					var $area = jQuery("#calendarview-feeds .feedslist");
+
+					$area.children().each(function(){
+						var currentTarget = jQuery(this).find("input");
+						var sourceKey = currentTarget.data('calendarSourcekey');
+			
+						if (sourceKey !== undefined) {
+							if (feedCheckbox.is(':checked') && !currentTarget.is(':checked')) {
+								currentTarget.attr('checked','checked');
+								thisInstance.enableFeed(sourceKey);
+								thisInstance.addEvents(currentTarget);
+							} else if (!feedCheckbox.is(':checked') && currentTarget.is(':checked')) {
+								currentTarget.removeAttr('checked');
+								thisInstance.disableFeed(sourceKey);
+								thisInstance.removeEvents(currentTarget);
+							}
+						}
+					})
 				});
 	},
 	updateRangeFields: function (container, options) {
@@ -531,6 +589,7 @@ Vtiger.Class("Calendar_Calendar_Js", {
 		var moduleName = modulesList.val();
 		var fieldName = modalContainer.find('select[name="fieldsList"]').val();
 		var selectedColor = modalContainer.find('input.selectedColor').val();
+		var isOwn = modalContainer.find('input[name="is_own"]').is(':checked') ? 1 : 0;
 		var conditions = '';
 		if (moduleName === 'Events') {
 			conditions = modalContainer.find('[name="conditions"]').val();
@@ -557,7 +616,8 @@ Vtiger.Class("Calendar_Calendar_Js", {
 			viewmodule: moduleName,
 			viewfieldname: fieldName,
 			viewColor: selectedColor,
-			viewConditions: conditions
+			viewConditions: conditions,
+			viewIsOwn: isOwn
 		};
 
 		app.helper.showProgress();
@@ -588,6 +648,7 @@ Vtiger.Class("Calendar_Calendar_Js", {
 							attr('data-calendar-feed', moduleName).
 							attr('data-calendar-fieldlabel', translatedFieldName).
 							attr('data-calendar-fieldname', fieldName).
+							attr('data-calendar-is_own', isOwn).
 							attr('title', translatedModuleName).
 							attr('checked', 'checked');
 					if (data['type']) {
@@ -599,6 +660,7 @@ Vtiger.Class("Calendar_Calendar_Js", {
 				} else {
 					feedIndicator = jQuery('#calendarview-feeds')
 							.find('[data-calendar-sourcekey="' + calendarSourceKey + '"]')
+							.data('calendarIs_own', isOwn)
 							.closest('.calendar-feed-indicator');
 				}
 
@@ -663,6 +725,11 @@ Vtiger.Class("Calendar_Calendar_Js", {
 			var selectedColorCode = '#' + hex;
 			selectedColor.val(selectedColorCode);
 		});
+
+		modalContainer.find('input[name="is_own"]').attr('checked', feedIndicator.find('.toggleCalendarFeed').data('calendarIs_own') === 1);
+		if(feedIndicator.find('.toggleCalendarFeed').data('calendarIsdefault') === 1) {
+			modalContainer.find('input[name="is_own"]').parents('.form-group').hide();
+		}
 
 		thisInstance.registerDateFieldChangeEvent(modalContainer);
 
@@ -837,8 +904,10 @@ Vtiger.Class("Calendar_Calendar_Js", {
 			var module = jQuery(this).val();
 			if (module === 'Events') {
 				modalContainer.find('#js-eventtype-condition').removeClass('hide');
+				modalContainer.find('#is_own').parents('.form-group:first').addClass('hide');
 			} else {
 				modalContainer.find('#js-eventtype-condition').addClass('hide');
+				modalContainer.find('#is_own').parents('.form-group:first').removeClass('hide');
 			}
 		}).trigger('change');
 
@@ -1071,14 +1140,14 @@ Vtiger.Class("Calendar_Calendar_Js", {
 				if (e.isDefaultPrevented()) {
 					return false;
 				}
-				var formData = jQuery(form).serialize();
+				var formData = jQuery(form).serializeFormData();
 				app.helper.showProgress();
 				app.request.post({data: formData}).then(function (err, data) {
 					app.helper.hideProgress();
 					if (!err) {
 						jQuery('.vt-notification').remove();
 						app.helper.hideModal();
-						var message = typeof formData.record !== 'undefined' ? app.vtranslate('JS_EVENT_UPDATED') : app.vtranslate('JS_RECORD_CREATED');
+						var message = formData.record !== "" ? app.vtranslate('JS_EVENT_UPDATED') : app.vtranslate('JS_RECORD_CREATED');
 						app.helper.showSuccessNotification({"message": message});
 						thisInstance.showEventOnCalendar(data);
 					} else {
@@ -1329,7 +1398,7 @@ Vtiger.Class("Calendar_Calendar_Js", {
 				thisInstance.updateAllEventsOnCalendar();
 			}
 			if(thisInstance.changeUserList) {
-				//thisInstance.changeUserList();
+				thisInstance.changeUserList();
 			}
 		});
 	},
@@ -1470,7 +1539,8 @@ Vtiger.Class("Calendar_Calendar_Js", {
 			app.helper.hideProgress();
 			if (!err) {
 				jQuery('.vt-notification').remove();
-				app.helper.showSuccessNotification({"message": ''});
+				var message = typeof formData.record !== "" ? app.vtranslate('JS_EVENT_UPDATED') : app.vtranslate('JS_RECORD_CREATED');
+				app.helper.showSuccessNotification({"message": message});
 				app.event.trigger("post.QuickCreateForm.save", data, jQuery(form).serializeFormData());
 				app.helper.hideModal();
 			} else {

@@ -74,7 +74,7 @@
 									<tr class="listViewEntries" data-id="{$LISTVIEW_ENTRY->getId()}"
 										{if method_exists($LISTVIEW_ENTRY,'getDetailViewUrl')}data-recordurl="{$LISTVIEW_ENTRY->getDetailViewUrl()}"{/if}
 										{if method_exists($LISTVIEW_ENTRY,'getRowInfo')}data-info="{Vtiger_Util_Helper::toSafeHTML(ZEND_JSON::Encode($LISTVIEW_ENTRY->getRowInfo()))}"{/if}>
-										<td width="10%">
+										<td width="10%" class="listViewEntryValue">
 											{include file="ListViewRecordActions.tpl"|vtemplate_path:$QUALIFIED_MODULE}
 										</td>
 										{foreach item=LISTVIEW_HEADER from=$LISTVIEW_HEADERS}
@@ -91,7 +91,7 @@
 								{/foreach}
 								{if $LISTVIEW_ENTRIES_COUNT eq '0'}
 									<tr class="emptyRecordsDiv">
-										{assign var=COLSPAN_WIDTH value={count($LISTVIEW_HEADERS)+1}}
+										{assign var=COLSPAN_WIDTH value={php7_count($LISTVIEW_HEADERS)+1}}
 										<td colspan="{$COLSPAN_WIDTH}" style="vertical-align:inherit !important;">
 											<center>{vtranslate('LBL_NO')} {vtranslate($MODULE, $QUALIFIED_MODULE)} {vtranslate('LBL_FOUND')}</center>
 										</td>
